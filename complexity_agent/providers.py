@@ -1,7 +1,7 @@
 """Supported LLM providers.
 
 Every provider except Anthropic speaks the OpenAI-compatible `/chat/completions` protocol, so one
-client handles them all. Keep this list in sync with extension/src/lib/complexityAgent.ts.
+client handles them all. Keep this list in sync with frontend/extension/src/lib/complexityAgent.ts.
 """
 from __future__ import annotations
 
