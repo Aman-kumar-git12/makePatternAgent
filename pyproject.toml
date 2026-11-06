@@ -1,0 +1,10 @@
+[project]
+name = "makepattern-complexity-agent"
+version = "1.0.0"
+description = "REST agent that analyses time and space complexity with your own LLM API key"
+requires-python = ">=3.10"
+# Dependencies are pinned in requirements.txt (tests: requirements-dev.txt).
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

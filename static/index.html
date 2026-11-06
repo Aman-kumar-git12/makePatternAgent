@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Complexity Agent</title>
+<style>
+  :root { --bg:#f7f7f8; --card:#fff; --ink:#18181b; --ink-2:#52525b; --line:#e4e4e7; --accent:#f97316; --bad:#dc2626; --good:#15803d; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f0f12; --card:#18181d; --ink:#f4f4f5; --ink-2:#a1a1aa; --line:#2a2a31; --accent:#fb923c; --bad:#f87171; --good:#4ade80; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  p.sub { margin:0 0 20px; color:var(--ink-2); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:16px; }
+  label { display:block; font-weight:600; font-size:12px; margin:0 0 4px; color:var(--ink-2); }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px; }
+  @media (max-width:560px) { .row { grid-template-columns:1fr; } }
+  input, select, textarea { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink); font:inherit; }
+  textarea { font-family:ui-monospace, Menlo, monospace; font-size:12.5px; min-height:220px; resize:vertical; }
+  .hint { font-size:12px; color:var(--ink-2); margin-top:4px; }
+  .hint a { color:var(--accent); }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:10px 16px; font:inherit; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:default; }
+  .check { display:flex; gap:6px; align-items:center; font-size:12px; color:var(--ink-2); margin-top:6px; }
+  .check input { width:auto; }
+  .big { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .metric { border:1px solid var(--line); border-radius:10px; padding:12px; }
+  .metric .k { font-size:12px; color:var(--ink-2); }
+  .metric .v { font-size:22px; font-weight:700; font-family:ui-monospace, Menlo, monospace; }
+  .err { color:var(--bad); }
+  ul { margin:8px 0 0; padding-left:18px; }
+  .meta { font-size:12px; color:var(--ink-2); margin-top:10px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Complexity Agent</h1>
+  <p class="sub">Paste code and get its time and space complexity, using your own API key. The key is sent only to the provider you choose and is never stored by this agent.</p>
+
+  <form class="card" id="form">
+    <div class="row">
+      <div>
+        <label for="provider">Provider</label>
+        <select id="provider"></select>
+      </div>
+      <div>
+        <label for="model">Model</label>
+        <input id="model" list="models" placeholder="default" autocomplete="off" />
+        <datalist id="models"></datalist>
+      </div>
+    </div>
+    <div style="margin-bottom:12px">
+      <label for="key">API key</label>
+      <input id="key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your API key" />
+      <div class="hint" id="keyHint"></div>
+      <label class="check"><input type="checkbox" id="remember" /> Remember the key in this browser</label>
+    </div>
+    <label for="code">Code</label>
+    <textarea id="code" spellcheck="false" placeholder="Paste a solution (Python, C++, Java, JavaScript…)"></textarea>
+    <div style="margin-top:12px; display:flex; gap:12px; align-items:center">
+      <button id="go" type="submit">Analyse complexity</button>
+      <span id="status" class="hint" role="status"></span>
+    </div>
+  </form>
+
+  <section class="card" id="result" hidden aria-live="polite">
+    <div class="big">
+      <div class="metric"><div class="k">Time</div><div class="v" id="time"></div></div>
+      <div class="metric"><div class="k">Space</div><div class="v" id="space"></div></div>
+    </div>
+    <p id="timeWhy"></p>
+    <p id="spaceWhy"></p>
+    <p id="verdict"></p>
+    <ul id="vars"></ul>
+    <div class="meta" id="meta"></div>
+  </section>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k) { try { return localStorage.getItem(k) || sessionStorage.getItem(k) || ''; } catch { return ''; } },
+    set(k, v, remember) {
+      try {
+        localStorage.removeItem(k); sessionStorage.removeItem(k);
+        if (v) (remember ? localStorage : sessionStorage).setItem(k, v);
+      } catch {}
+    },
+  };
+  let providers = [];
+  const current = () => providers.find((p) => p.id === $('provider').value);
+
+  function showProvider() {
+    const p = current();
+    if (!p) return;
+    $('model').placeholder = p.default_model;
+    $('models').replaceChildren(...p.models.map((m) => Object.assign(document.createElement('option'), { value: m })));
+    $('key').disabled = !p.needs_key;
+    $('key').value = store.get('key:' + p.id);
+    $('remember').checked = (() => { try { return !!localStorage.getItem('key:' + p.id); } catch { return false; } })();
+    const hint = $('keyHint');
+    hint.textContent = p.needs_key ? (p.tier === 'free' ? 'Free tier available. ' : 'Paid API. ') : 'No key needed; runs on your machine. ';
+    const a = Object.assign(document.createElement('a'), { href: p.key_url, target: '_blank', rel: 'noopener', textContent: p.needs_key ? 'Get a key' : 'Install Ollama' });
+    hint.append(a);
+    try { localStorage.setItem('provider', p.id); } catch {}
+  }
+
+  async function load() {
+    providers = await (await fetch('/api/providers')).json();
+    const groups = { free: 'Free tier', paid: 'Paid', local: 'Local' };
+    for (const [tier, label] of Object.entries(groups)) {
+      const g = Object.assign(document.createElement('optgroup'), { label });
+      for (const p of providers.filter((x) => x.tier === tier)) g.append(new Option(p.name, p.id));
+      $('provider').append(g);
+    }
+    let saved = '';
+    try { saved = localStorage.getItem('provider') || ''; } catch {}
+    $('provider').value = providers.some((p) => p.id === saved) ? saved : 'groq';
+    showProvider();
+  }
+
+  $('provider').addEventListener('change', showProvider);
+  $('form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const p = current();
+    const key = $('key').value.trim();
+    store.set('key:' + p.id, key, $('remember').checked);
+    $('status').className = 'hint';
+    $('status').textContent = 'Analysing…';
+    $('go').disabled = true;
+    try {
+      const res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(key ? { 'X-API-Key': key } : {}) },
+        body: JSON.stringify({ provider: p.id, model: $('model').value.trim(), code: $('code').value }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : `Request failed (${res.status})`);
+      $('time').textContent = data.time_complexity;
+      $('space').textContent = data.space_complexity;
+      $('timeWhy').textContent = 'Time: ' + data.time_explanation;
+      $('spaceWhy').textContent = 'Space: ' + data.space_explanation;
+      $('verdict').textContent = (data.is_optimal ? 'Optimal. ' : `Can be improved to ${data.better_complexity || 'a better complexity'}. `) + data.suggestion;
+      $('verdict').style.color = data.is_optimal ? 'var(--good)' : 'var(--accent)';
+      $('vars').replaceChildren(...data.variables.map((v) => Object.assign(document.createElement('li'), { textContent: `${v.name}: ${v.meaning}` })));
+      $('meta').textContent = `${p.name} · ${data.model} · confidence ${data.confidence}`;
+      $('result').hidden = false;
+      $('status').textContent = '';
+    } catch (err) {
+      $('status').className = 'hint err';
+      $('status').textContent = err.message;
+    } finally {
+      $('go').disabled = false;
+    }
+  });
+  load().catch(() => { $('status').textContent = 'Could not load providers.'; });
+</script>
+</body>
+</html>
